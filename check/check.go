@@ -1,26 +1,17 @@
 package check
 
 import (
+    "encoding/json"
     "log"
+    "os"
     "sensor-online-check/esclient"
     "sensor-online-check/query"
     "sensor-online-check/utils"
     "time"
-    "os"
 )
 
-// CheckDeviceStatus 执行设备状态检查并输出状态
-func CheckDeviceStatus(esClient *esclient.ElasticsearchClient, deviceSN string) {
-    // 打开日志文件，文件不存在时创建，追加写入
-    logFile, err := os.OpenFile("app.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-    if err != nil {
-        log.Fatalf("Error opening log file: %v", err)
-    }
-    defer logFile.Close()
-
-    // 设置日志输出到文件
-    log.SetOutput(logFile)
-
+// CheckDeviceStatus 检查单个设备的状态
+func CheckDeviceStatus(esClient *esclient.ElasticsearchClient, deviceSN string) (map[string]interface{}, error) {
     // 获取设备查询体
     queryStr := query.GetDeviceQuery(deviceSN)
 
@@ -28,7 +19,7 @@ func CheckDeviceStatus(esClient *esclient.ElasticsearchClient, deviceSN string) 
     esResponse, err := esClient.SendRequest(queryStr)
     if err != nil {
         log.Println("Error sending request:", err)
-        return
+        return nil, err
     }
 
     // 获取 @timestamp 并进行比较
@@ -41,7 +32,7 @@ func CheckDeviceStatus(esClient *esclient.ElasticsearchClient, deviceSN string) 
         localTime, err := utils.ConvertTimestampToLocalTime(timestamp)
         if err != nil {
             log.Println("时间解析错误：", err)
-            return
+            return nil, err
         }
 
         // 将时间调整为 UTC 时间，减去 8 小时
@@ -54,13 +45,64 @@ func CheckDeviceStatus(esClient *esclient.ElasticsearchClient, deviceSN string) 
         timeDiff := currentTime.Sub(adjustedTime)
         log.Println("时间差为：", timeDiff)
 
+        status := "在线"
         if utils.IsTimeDifferenceGreaterThanFiveMinutes(timeDiff) {
-            log.Println("掉线")
+            log.Printf("传感器%s掉线\n", deviceSN)
+            status = "掉线"
         } else {
-            log.Println("在线")
+            log.Printf("传感器%s在线\n", deviceSN)
         }
+
+        // 创建日志条目
+        logEntry := map[string]interface{}{
+            "deviceSN":  deviceSN,
+            "status":    status,
+            "timestamp": time.Now().Format(time.RFC3339),
+        }
+
+        return logEntry, nil
     } else {
         log.Println("没有找到数据")
+        return nil, nil
     }
-	log.Println("#################################################################################")
+}
+
+// CheckMultipleDeviceStatus 检查多个设备的状态并将结果写入日志文件和 JSON 文件
+func CheckMultipleDeviceStatus(logFile *os.File, jsonLogFile *os.File, esClient *esclient.ElasticsearchClient, deviceSNs []string) {
+    // 设置日志输出到文件
+    log.SetOutput(logFile)
+
+    // 创建一个日志条目切片
+    var logEntries []map[string]interface{}
+
+    // 遍历设备列表并检查每个设备的状态
+    for _, deviceSN := range deviceSNs {
+        logEntry, err := CheckDeviceStatus(esClient, deviceSN)
+        if err != nil {
+            log.Printf("Error checking device %s: %v", deviceSN, err)
+            continue
+        }
+        if logEntry != nil {
+            logEntries = append(logEntries, logEntry)
+        }
+    }
+
+    // 输出分隔符
+    log.Println("#################################################################################")
+
+    // 将日志条目切片转换为 JSON 字符串
+    jsonLog, err := json.MarshalIndent(logEntries, "", "  ")
+    if err != nil {
+        log.Printf("Error marshaling log entries to JSON: %v", err)
+        return
+    }
+
+    // 将 JSON 字符串写入文件
+    if _, err := jsonLogFile.Write(append(jsonLog, '\n')); err != nil {
+        log.Printf("Error writing JSON log to file: %v", err)
+    }
+
+    // 手动刷新缓冲区
+    logFile.Sync()
+    jsonLogFile.Sync()
 }

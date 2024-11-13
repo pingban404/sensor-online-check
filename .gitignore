@@ -12,3 +12,5 @@ config.yml
 
 # 编译时产生的临时文件
 *.out
+
+*.json
