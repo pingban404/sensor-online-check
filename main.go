@@ -3,10 +3,13 @@ package main
 import (
     "log"
     "os"
+    "os/exec"
     "sensor-online-check/config"
     "sensor-online-check/esclient"
     "sensor-online-check/check"
+    "sensor-online-check/email"
     "time"
+    "fmt"
 )
 
 func main() {
@@ -36,9 +39,20 @@ func main() {
     // 配置设备SN
     deviceSNs := []string{"2407101", "2407104", "2407106"}
 
-    // // 立即执行
-    // check.CheckMultipleDeviceStatus(logFile, jsonLogFile, esClient, deviceSNs)
-    
+    // 获取主机名
+    hostname, err := exec.Command("hostname").Output()
+    if err != nil {
+        log.Fatalf("Error getting hostname: %v", err)
+    }
+
+    // 发送测试邮件
+    subject := "服务开始运行"
+    body := fmt.Sprintf("%s - 服务开始运行", hostname)
+    recipients := []string{"1242105494@qq.com", "3069319chen@163.com"}
+    if err := email.SendAlertEmail(&conf.Mail, subject, body, recipients); err != nil {
+        log.Fatalf("Error sending test email: %v", err)
+    }
+
     // 定义 ticker，每隔 30 分钟运行一次
     ticker := time.NewTicker(30 * time.Minute)
     defer ticker.Stop()

@@ -1,5 +1,5 @@
 # 忽略二进制文件
-myapp.exe
+*.exe
 
 # 忽略日志文件
 app.log
@@ -14,3 +14,5 @@ config.yml
 *.out
 
 *.json
+
+*.txt

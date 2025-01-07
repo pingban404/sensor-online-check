@@ -8,6 +8,9 @@ import (
     "sensor-online-check/query"
     "sensor-online-check/utils"
     "time"
+    "fmt"
+    "io/ioutil"
+    "sensor-online-check/email"
 )
 
 // CheckDeviceStatus 检查单个设备的状态
@@ -17,7 +20,7 @@ func CheckDeviceStatus(esClient *esclient.ElasticsearchClient, deviceSN string) 
 
     // 发送请求
     esResponse, err := esClient.SendRequest(queryStr)
-    if err != nil {
+    if (err != nil) {
         log.Println("Error sending request:", err)
         return nil, err
     }
@@ -44,13 +47,16 @@ func CheckDeviceStatus(esClient *esclient.ElasticsearchClient, deviceSN string) 
         // 计算时间差并判断是否大于5分钟
         timeDiff := currentTime.Sub(adjustedTime)
         log.Println("时间差为：", timeDiff)
+        fmt.Println("时间差为：", timeDiff)
 
         status := "在线"
         if utils.IsTimeDifferenceGreaterThanFiveMinutes(timeDiff) {
             log.Printf("传感器%s掉线\n", deviceSN)
+            fmt.Printf("传感器%s掉线\n", deviceSN)
             status = "掉线"
         } else {
             log.Printf("传感器%s在线\n", deviceSN)
+            fmt.Printf("传感器%s在线\n", deviceSN)
         }
 
         // 创建日志条目
@@ -65,6 +71,30 @@ func CheckDeviceStatus(esClient *esclient.ElasticsearchClient, deviceSN string) 
         log.Println("没有找到数据")
         return nil, nil
     }
+}
+
+func CheckAlertCount(esClient *esclient.ElasticsearchClient, ruleName string) (int, error) {
+    query := fmt.Sprintf(`{
+        "query": {
+            "bool": {
+                "must": [
+                    {
+                        "term": {
+                            "kibana.alert.rule.name": "%s"
+                        }
+                    }
+                ]
+            }
+        }
+    }`, ruleName)
+
+    countResponse, err := esClient.SendCountRequest(query)
+    if err != nil {
+        log.Println("Error sending count request:", err)
+        return 0, err
+    }
+
+    return countResponse.Count, nil
 }
 
 // CheckMultipleDeviceStatus 检查多个设备的状态并将结果写入日志文件和 JSON 文件
@@ -85,6 +115,43 @@ func CheckMultipleDeviceStatus(logFile *os.File, jsonLogFile *os.File, esClient 
         if logEntry != nil {
             logEntries = append(logEntries, logEntry)
         }
+    }
+
+    // 检查告警计数
+    ruleName := "规则编号11000009-峰峰值异常"
+    alertCount, err := CheckAlertCount(esClient, ruleName)
+    if err != nil {
+        log.Printf("Error checking alert count: %v\n", err)
+    } else {
+        log.Printf("Alert count for rule %s: %d\n", ruleName, alertCount)
+        fmt.Printf("Alert count for rule %s: %d\n", ruleName, alertCount)
+    
+        // 读取上一次的告警计数
+        var lastAlertCount int
+        lastAlertCountFile := "last_alert_count.txt"
+        if data, err := ioutil.ReadFile(lastAlertCountFile); err == nil {
+            fmt.Sscanf(string(data), "%d", &lastAlertCount)
+        }
+    
+        // 判断告警计数是否发生变化
+        if alertCount != lastAlertCount {
+            log.Printf("Alert count for rule %s has changed from %d to %d\n", ruleName, lastAlertCount, alertCount)
+            fmt.Printf("Alert count for rule %s has changed from %d to %d\n", ruleName, lastAlertCount, alertCount)
+            
+            // 发送告警邮件
+            subject := fmt.Sprintf("Alert count changed for rule %s", ruleName)
+            body := fmt.Sprintf("Alert count for rule %s has changed from %d to %d", ruleName, lastAlertCount, alertCount)
+            recipients := []string{"1242105494@qq.com", "3069319chen@163.com"}
+            if err := email.SendAlertEmail(&conf.Mail, subject, body, recipients); err != nil {
+                log.Printf("Error sending alert email: %v\n", err)
+            }
+        } else {
+            log.Printf("Alert count for rule %s has not changed\n", ruleName)
+            fmt.Printf("Alert count for rule %s has not changed\n", ruleName)
+        }
+    
+        // 保存当前的告警计数
+        ioutil.WriteFile(lastAlertCountFile, []byte(fmt.Sprintf("%d", alertCount)), 0644)
     }
 
     // 输出分隔符

@@ -19,6 +19,10 @@ type ElasticsearchResponse struct {
     } `json:"hits"`
 }
 
+type CountResponse struct {
+    Count int `json:"count"`
+}
+
 type ElasticsearchClient struct {
     URL   string
     Auth  string
@@ -67,4 +71,33 @@ func (e *ElasticsearchClient) SendRequest(query string) (ElasticsearchResponse, 
     }
 
     return esResponse, nil
+}
+
+func (e *ElasticsearchClient) SendCountRequest(query string) (CountResponse, error) {
+    req, err := http.NewRequest("POST", e.URL+"/_count", bytes.NewBuffer([]byte(query)))
+    if err != nil {
+        return CountResponse{}, fmt.Errorf("error creating request: %v", err)
+    }
+
+    req.Header.Set("Content-Type", "application/json")
+    req.Header.Set("Authorization", e.Auth)
+
+    resp, err := e.Client.Do(req)
+    if err != nil {
+        return CountResponse{}, fmt.Errorf("error sending request: %v", err)
+    }
+    defer resp.Body.Close()
+
+    body, err := ioutil.ReadAll(resp.Body)
+    if err != nil {
+        return CountResponse{}, fmt.Errorf("error reading response: %v", err)
+    }
+
+    var countResponse CountResponse
+    err = json.Unmarshal(body, &countResponse)
+    if err != nil {
+        return CountResponse{}, fmt.Errorf("error unmarshalling response: %v", err)
+    }
+
+    return countResponse, nil
 }
